@@ -136,6 +136,14 @@ class EddsaSignature {
     return new this({ R, s });
   }
 
+  /**
+   * Check structural validity of the signature representation.
+   *
+   * This range-checks the foreign-field limbs of `R` and `s`, and proves that
+   * `s` is almost reduced modulo the scalar field. It does not prove that `R`
+   * decodes to a valid curve point or that the signature verifies; those checks
+   * happen in {@link verify}.
+   */
   static check(signature: EddsaSignature) {
     multiRangeCheck(signature.R.value);
     multiRangeCheck(signature.s.value);
