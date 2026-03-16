@@ -119,7 +119,7 @@ class EddsaSignature {
     return Eddsa.verify(
       toObject(this),
       message.bytes,
-      encode(toPoint(publicKey_))
+      encode(toPoint(publicKey_)),
     );
   }
 
@@ -130,17 +130,25 @@ class EddsaSignature {
    */
   static sign(
     message: (bigint | number)[] | Uint8Array,
-    privateKey: bigint
+    privateKey: bigint,
   ): EddsaSignature {
     let { R, s } = Eddsa.sign(privateKey, message);
     return new this({ R, s });
   }
 
+  /**
+   * Check structural validity of the signature representation.
+   *
+   * This range-checks the foreign-field limbs of `R` and `s`, and proves that
+   * `s` is almost reduced modulo the scalar field. It does not prove that `R`
+   * decodes to a valid curve point or that the signature verifies; those checks
+   * happen in {@link verify}.
+   */
   static check(signature: EddsaSignature) {
     multiRangeCheck(signature.R.value);
     multiRangeCheck(signature.s.value);
     // more efficient than the automatic check, which would do this for each scalar separately
-    this.Curve.Scalar.assertAlmostReduced(signature.R, signature.s);
+    this.Curve.Scalar.assertAlmostReduced(signature.s);
   }
 
   // dynamic subclassing infra
@@ -174,7 +182,7 @@ class EddsaSignature {
  * Create a class {@link EddsaSignature} for verifying EdDSA signatures on the given curve.
  */
 function createEddsa(
-  curve: TwistedCurveParams | typeof ForeignTwisted
+  curve: TwistedCurveParams | typeof ForeignTwisted,
 ): typeof EddsaSignature {
   let Curve0: typeof ForeignTwisted =
     'd' in curve ? createForeignTwisted(curve) : curve;
