@@ -5,6 +5,7 @@ export {
   Field3,
   createForeignTwisted,
   TwistedCurves,
+  derivePublicKey,
 } from './provable/twisted-curve.js';
 
 export {

@@ -8,6 +8,7 @@ export {
   affineTwistedZero,
   createAffineTwistedCurve,
   TwistedCurveParams,
+  modPow,
 };
 
 const { mod, inverse, createField, p } = Core.FiniteField;
