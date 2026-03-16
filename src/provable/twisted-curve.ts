@@ -727,6 +727,8 @@ function signEddsa(
     L
   );
 
+  // All inputs are constants in sign(), so mul/add take their constant paths and
+  // reduce modulo L. Therefore, s is in canonical range [0, L).
   let s = ForeignField.add(r, ForeignField.mul(k, toField3(scalar, L), L), L);
 
   return { R, s };
@@ -742,7 +744,8 @@ function verifyEddsa(
   let { x, y } = decode(fromField3(R));
   let A = decode(fromField3(publicKey));
 
-  ForeignField.assertLessThanOrEqual(s, Curve.order);
+  // Ensure canonical representation of s
+  ForeignField.assertLessThan(s, Curve.order);
 
   let k = SHA2.hash(512, [
     ...fromField3(R).flat(),
@@ -781,8 +784,8 @@ function recoverX(y: bigint, x_0: bigint): bigint {
     aux === u
       ? candidate_x
       : aux === -u
-      ? (candidate_x * 2n) ^ ((p - 1n) / 4n)
-      : (() => {
+        ? (candidate_x * 2n) ^ ((p - 1n) / 4n)
+        : (() => {
           throw new Error(
             `Decoding failed: no square root x exists for y value: ${y}.`
           );
@@ -1112,8 +1115,8 @@ function createForeignTwisted(
 
   const FieldUnreduced = createForeignField(params.modulus);
   const ScalarUnreduced = createForeignField(params.order);
-  class Field extends FieldUnreduced.AlmostReduced {}
-  class Scalar extends ScalarUnreduced.AlmostReduced {}
+  class Field extends FieldUnreduced.AlmostReduced { }
+  class Scalar extends ScalarUnreduced.AlmostReduced { }
 
   const BigintCurve = createAffineTwistedCurve(params);
 
