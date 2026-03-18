@@ -37,8 +37,8 @@
     ]
   },
   "dependencies": {
-    "o1js": "2.10.0-dev.e7f2f",
-    "@o1js/native": "2.10.0-dev.e7f2f"
+    "o1js": "2.10.0-dev.6d3a3",
+    "@o1js/native": "2.10.0-dev.6d3a3"
   },
   "devDependencies": {
     "@babel/preset-env": "^7.16.4",
