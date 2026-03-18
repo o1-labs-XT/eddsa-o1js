@@ -50,7 +50,16 @@ class EddsaSignature {
     R: AlmostForeignField | Field3 | bigint | number;
     s: AlmostForeignField | Field3 | bigint | number;
   }) {
-    this.R = new this.Constructor.Curve.Scalar(signature.R);
+    // R is a compressed point encoding (up to 2^256),x larger than both the
+    // scalar field (~2^252) and the base field (~2^255). Converting a bigint
+    // through any ForeignField constructor would reduce mod the modulus,
+    // corrupting the parity bit. Instead, we should always convert to Field3 (raw limbs)
+    // first, which bypasses the modular reduction in the ForeignField constructor.
+    let R = signature.R;
+    if (typeof R === 'bigint' || typeof R === 'number') {
+      R = Gadgets.Field3.from(BigInt(R));
+    }
+    this.R = new this.Constructor.Curve.Field(R);
     this.s = new this.Constructor.Curve.Scalar(signature.s);
   }
 
@@ -188,10 +197,24 @@ function createEddsa(
     'd' in curve ? createForeignTwisted(curve) : curve;
   class Curve extends Curve0 {}
 
+  // R is a compressed point encoding (up to 2^256) that must not be reduced
+  // modulo the base field or scalar field. We create a provable for R that
+  // converts bigints to Field3 (raw limbs) to bypass ForeignField's mod reduction.
+  let baseProvable = Curve.Field.provable;
+  let UnreducedR: typeof baseProvable = {
+    ...baseProvable,
+    fromValue(x: any) {
+      if (typeof x === 'bigint' || typeof x === 'number' || typeof x === 'string') {
+        return new Curve.Field(Gadgets.Field3.from(BigInt(x)));
+      }
+      return baseProvable.fromValue(x);
+    },
+  };
+
   class Signature extends EddsaSignature {
     static _Curve = Curve;
     static _provable = provableFromClass(Signature, {
-      R: Curve.Scalar,
+      R: UnreducedR,
       s: Curve.Scalar,
     });
   }

@@ -21,6 +21,7 @@ import {
   affineTwistedDouble,
   affineTwistedZero,
   createAffineTwistedCurve,
+  modPow,
 } from '../crypto/elliptic-curve.js';
 import { TwistedCurveParams } from '../index.js';
 
@@ -37,6 +38,7 @@ export {
   ForeignTwisted,
   createForeignTwisted,
   TwistedCurves,
+  derivePublicKey,
 };
 
 const { Field3, arrayGetGeneric, ForeignField, SHA2, multiRangeCheck } =
@@ -557,11 +559,14 @@ function encode(input: Point): Field3 {
     )
   );
 
-  let enc = ForeignField.add(
-    ForeignField.mul(x_lsb3, Field3.from(1n << 255n), p),
-    y_masked,
-    p
-  );
+  // Build encoding via direct limb manipulation to avoid mod p reduction.
+  // Ed25519 encoding: enc = x_lsb * 2^255 + y (raw 256-bit value, not reduced mod p).
+  // 2^255 = 2^176 * 2^79, so x_lsb * 2^255 lands at bit 79 of the third limb.
+  let enc: Field3 = [
+    y_masked[0],
+    y_masked[1],
+    y_masked[2].add(x_lsb.mul(1n << 79n)),
+  ];
   return enc;
 }
 
@@ -656,7 +661,7 @@ function decode(input: UInt8[]): Point {
  * @returns the public key as a 32-byte encoded curve point,
  *          and the full SHA2-512 digest of the private key
  */
-function keygenEddsa(privateKey: UInt8[]): [Field3, Bytes] {
+function keygenEddsa(privateKey: UInt8[]): [Field3, UInt8[], Bytes] {
   // TODO: use arrays instead of bigints?
   if (privateKey.length > 32) {
     throw new Error(`Invalid length of EdDSA private key: ${privateKey}.`);
@@ -665,7 +670,7 @@ function keygenEddsa(privateKey: UInt8[]): [Field3, Bytes] {
   const h = SHA2.hash(512, privateKey);
   // only need lowest 32 bytes to generate the public key
   let buffer = h.bytes.slice(0, 32);
-  // prune buffer
+  // prune buffer per RFC 8032 Section 5.1.5
   buffer[0] = UInt8.from(
     Gadgets.and(buffer[0].value, Field.from(0b11111000), 8)
   ); // clear lowest 3 bits
@@ -683,7 +688,8 @@ function keygenEddsa(privateKey: UInt8[]): [Field3, Bytes] {
   const f = Curve.Field.modulus;
   const s = toField3(buffer, f);
 
-  return [encode(TwistedCurve.scale(s, basePoint, Curve)), h];
+  // Return encoded public key, pruned scalar bytes, and full hash
+  return [encode(TwistedCurve.scale(s, basePoint, Curve)), buffer, h];
 }
 
 /**
@@ -702,9 +708,9 @@ function signEddsa(
 ): Eddsa.Signature {
   const L = Curve.order;
   let key = fromBigint(privateKey);
-  const [publicKey, h] = keygenEddsa(key);
-  // secret scalar obtained from first half of the digest
-  const scalar = h.bytes.slice(0, 32);
+  const [publicKey, prunedScalar, h] = keygenEddsa(key);
+  // secret scalar obtained from first half of the digest (pruned per RFC 8032)
+  const scalar = prunedScalar;
   // prefix obtained from second half of the digest
   const prefix = h.bytes.slice(32, 64);
 
@@ -759,37 +765,60 @@ function verifyEddsa(
     TwistedCurve.scale(s, basePoint, Curve),
     TwistedCurve.add(
       { x, y },
-      TwistedCurve.scale(toField3(k, Curve.Field.modulus), A, Curve),
+      TwistedCurve.scale(toField3(k, Curve.order), A, Curve),
       Curve
     )
   );
+}
+
+/**
+ * Derive the Ed25519 public key point from a 32-byte private key seed following RFC 8032 Section 5.1.5.
+ */
+function derivePublicKey(privateKey: bigint): { x: bigint; y: bigint } {
+  let key = fromBigint(privateKey);
+  const [encodedPK, ,] = keygenEddsa(key);
+  // decode the encoded public key to get the point
+  let pkBigint = Field3.toBigint(encodedPK);
+  let x_par = (pkBigint >> 255n) & 1n;
+  let y = pkBigint & ((1n << 255n) - 1n);
+  let x = recoverX(y, x_par);
+  return { x, y };
 }
 
 const Eddsa = {
   sign: signEddsa,
   verify: verifyEddsa,
   Signature: EddsaSignature,
+  derivePublicKey,
 };
 
 // https://www.rfc-editor.org/rfc/pdfrfc/rfc8032.txt.pdf Section 5.1.3
+// Recover x from y using: x = sqrt(u/v) where u = y^2 - 1, v = d*y^2 - a
+// Bernstein's formula: x = u*v^3 * (u*v^7)^{(p-5)/8} mod p
 function recoverX(y: bigint, x_0: bigint): bigint {
   const p = Curve.modulus;
-  const u = y * y - 1n;
-  const v = Curve.d * y * y - Curve.a;
-  const candidate_x = (u * v) ^ (3n * ((u * v) ^ 7n)) ^ ((p - 5n) / 8n);
+  const u = mod(y * y - 1n, p);
+  const v = mod(Curve.d * y * y - Curve.a, p);
 
-  let aux = mod((v * candidate_x) ^ 2n, p);
+  const v3 = modPow(v, 3n, p);
+  const v7 = modPow(v, 7n, p);
+  const candidate_x = mod(
+    mod(u * v3, p) * modPow(mod(u * v7, p), (p - 5n) / 8n, p),
+    p
+  );
 
-  let x =
-    aux === u
-      ? candidate_x
-      : aux === -u
-        ? (candidate_x * 2n) ^ ((p - 1n) / 4n)
-        : (() => {
-          throw new Error(
-            `Decoding failed: no square root x exists for y value: ${y}.`
-          );
-        })();
+  let vx2 = mod(v * modPow(candidate_x, 2n, p), p);
+
+  let x: bigint;
+  if (vx2 === mod(u, p)) {
+    x = candidate_x;
+  } else if (vx2 === mod(p - u, p)) {
+    x = mod(candidate_x * modPow(2n, (p - 1n) / 4n, p), p);
+  } else {
+    throw new Error(
+      `Decoding failed: no square root x exists for y value: ${y}.`
+    );
+  }
 
   // Use the parity bit to select the correct sign for x
   if (x === 0n && x_0 === 1n) {
@@ -1202,7 +1231,7 @@ function fromField(input: Field, bytelength: number = 32): UInt8[] {
       (_, k) => new UInt8((x >> BigInt(8 * k)) & 0xffn)
     );
   });
-  let field = bytes
+  let field = [...bytes]
     .reverse()
     .map((x) => x.value)
     .reduce((acc, byte) => acc.mul(256).add(byte));
