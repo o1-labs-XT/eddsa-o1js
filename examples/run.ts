@@ -1,3 +1,6 @@
+import { setBackend } from 'o1js';
+setBackend('native');
+
 import { Edwards25519, Eddsa, eddsa, Bytes32 } from './eddsa.js';
 import { initializeBindings } from 'o1js';
 import assert from 'assert';

@@ -1,5 +1,5 @@
 import { ZkProgram, Bool, Bytes } from 'o1js';
-import { createEddsa, createForeignTwisted, TwistedCurves } from 'eddsa-o1js';
+import { createEddsa, createForeignTwisted, TwistedCurves } from '../src/index.js';
 
 export { eddsa, Edwards25519, Eddsa, Bytes32 };
 
@@ -10,6 +10,8 @@ class Bytes32 extends Bytes(32) {}
 
 const eddsa = ZkProgram({
   name: 'eddsa',
+  numChunks: 4,
+  overrideWrapDomain: 2,
   publicInput: Bytes32,
   publicOutput: Bool,
 
